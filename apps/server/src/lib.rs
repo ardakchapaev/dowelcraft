@@ -18,6 +18,8 @@ const MAX_COMMANDS: usize = 500;
 const MAX_NUMBER: f64 = 100_000.0;
 const MAX_COPIES: f64 = 100.0;
 const MAX_PARTS: usize = 5_000;
+/// The project JSON after any command (a big kitchen is ~1 MB).
+const MAX_PROJECT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Rejects numbers that would make a model absurdly large or slow (also nested in arrays and objects).
 fn check_numbers(v: &Value, key: &str) -> Result<(), String> {
@@ -91,6 +93,10 @@ pub fn run(req: &Value) -> Result<(Project, Vec<Value>), Failure> {
         match s.execute(name, &params) {
             Ok(v) => results.push(v),
             Err(e) => return Err(Failure { status: 422, body: json!({ "error": e, "command_index": i, "cmd": name }) }),
+        }
+        // Checked after every command, so repeated copies cannot grow the model before the final part count.
+        if s.project.save().len() > MAX_PROJECT_BYTES {
+            return Err(Failure { status: 413, body: json!({ "error": format!("the project grew over {MAX_PROJECT_BYTES} bytes"), "command_index": i, "cmd": name }) });
         }
     }
     let parts = design::build(&s.project).map_err(|e| bad(422, e))?.len();

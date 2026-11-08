@@ -37,12 +37,37 @@ fn opening<'a>(parts: &'a [Part], at: [f64; 2]) -> Result<[&'a Part; 4], String>
     Ok([need(side(0, true), "on the left")?, need(side(0, false), "on the right")?, need(side(1, true), "below")?, need(side(1, false), "above")?])
 }
 
+/// Whether the opening bounds `lo` and `hi` are outer carcass parts along `axis` (sides, top, bottom) rather than
+/// inner dividers (partitions, shelves). A bound is an inner divider when another opening lies beyond it: the
+/// nearest body part on its far side (overlapping it across the other axis) is more than a plinth away.
+fn outer(parts: &[Part], lo: &Part, hi: &Part, axis: usize) -> (bool, bool) {
+    const NEXT_OPENING: f64 = 50.0;
+    let other = 1 - axis;
+    // Only parts lying like a divider count (thin along the axis, long across it): a shelf that ends at a
+    // partition is not "beyond" the partition.
+    fn neighbours<'a>(parts: &'a [Part], q: &'a Part, other: usize) -> Vec<&'a Part> {
+        let axis = 1 - other;
+        parts
+            .iter()
+            .filter(|p| p.owner == q.owner && p.kind == Kind::Body && !std::ptr::eq(*p, q))
+            .filter(|p| p.size[axis] < NEXT_OPENING * 2.0 && p.size[other] > p.size[axis])
+            .filter(|p| p.origin[other] < q.origin[other] + q.size[other] - 0.5 && q.origin[other] < p.origin[other] + p.size[other] - 0.5)
+            .collect()
+    }
+    let below = neighbours(parts, lo, other).iter().filter(|p| p.origin[axis] + p.size[axis] <= lo.origin[axis] + 0.5).map(|p| p.origin[axis] + p.size[axis]).fold(f64::NEG_INFINITY, f64::max);
+    let hi_end = hi.origin[axis] + hi.size[axis];
+    let above = neighbours(parts, hi, other).iter().filter(|p| p.origin[axis] >= hi_end - 0.5).map(|p| p.origin[axis]).fold(f64::INFINITY, f64::min);
+    // Nothing beyond (infinite distance) — an outer part.
+    (!below.is_finite() || lo.origin[axis] - below < NEXT_OPENING, !above.is_finite() || above - hi_end < NEXT_OPENING)
+}
+
 /// Front edges along an axis between boundaries `lo` and `hi`: overlay — at outer faces, half-overlay — at middles,
-/// inset — at inner faces; minus the gap.
-fn span(lo: &Part, hi: &Part, axis: usize, mount: Mount, gap: f64) -> (f64, f64) {
+/// inset — at inner faces; minus the gap. An overlay front stops at the middle of an inner divider (`outer` false),
+/// so fronts of neighbouring openings share a partition or shelf without overlapping, as in Bazis.
+fn span(lo: &Part, hi: &Part, axis: usize, mount: Mount, gap: f64, outer: (bool, bool)) -> (f64, f64) {
     let (lmin, lmax, hmin, hmax) = (lo.origin[axis], lo.origin[axis] + lo.size[axis], hi.origin[axis], hi.origin[axis] + hi.size[axis]);
     let (a, b) = match mount {
-        Mount::Overlay => (lmin, hmax),
+        Mount::Overlay => (if outer.0 { lmin } else { (lmin + lmax) / 2.0 }, if outer.1 { hmax } else { (hmin + hmax) / 2.0 }),
         Mount::Half => ((lmin + lmax) / 2.0, (hmin + hmax) / 2.0),
         Mount::Inset => (lmax, hmin),
     };
@@ -113,8 +138,8 @@ pub fn door(pr: &mut Project, p: &Value) -> Result<Value, String> {
     let [l, r, b, t] = opening(&parts, a.at)?;
     let m = pr.material(&a.material)?.clone();
     let edge = pr.edge(&a.edge)?.cloned();
-    let (x0, x1) = span(l, r, 0, a.mount, a.gap);
-    let (y0, y1) = span(b, t, 1, a.mount, a.gap);
+    let (x0, x1) = span(l, r, 0, a.mount, a.gap, outer(&parts, l, r, 0));
+    let (y0, y1) = span(b, t, 1, a.mount, a.gap, outer(&parts, b, t, 1));
     occupied(&parts, (x0, x1), (y0, y1))?;
     let front = (l.origin[2] + l.size[2]).min(r.origin[2] + r.size[2]);
     let z = if a.mount == Mount::Inset { front - m.thickness } else { front };
@@ -205,8 +230,8 @@ pub fn drawers(pr: &mut Project, p: &Value) -> Result<Value, String> {
         .map(|q| q.origin[2] + q.size[2])
         .fold(z0, f64::max);
     let depth = a.depth.unwrap_or(((z1 - z0 - 10.0) / 50.0).floor() * 50.0);
-    let (fx0, fx1) = span(l, r, 0, a.mount, a.gap);
-    let (fy0, fy1) = span(b, t, 1, a.mount, a.gap);
+    let (fx0, fx1) = span(l, r, 0, a.mount, a.gap, outer(&parts, l, r, 0));
+    let (fy0, fy1) = span(b, t, 1, a.mount, a.gap, outer(&parts, b, t, 1));
     // Height 0 — "Auto": the auto fronts share what is left of the opening.
     let heights = super::front_heights(&a.heights, fy1 - fy0, a.gap * (a.heights.len() - 1) as f64)?;
     let total: f64 = heights.iter().sum::<f64>() + a.gap * (heights.len() - 1) as f64;

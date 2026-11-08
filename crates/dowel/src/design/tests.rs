@@ -985,3 +985,27 @@ fn guide_lines() {
     s.execute("undo", &json!({})).unwrap();
     assert_eq!(s.project.guides.len(), 1);
 }
+
+#[test]
+fn fronts_of_neighbouring_openings_share_dividers() {
+    // Two sections and a shelf in the left one: overlay fronts cover the outer carcass fully and stop at
+    // the middle of the partition and the shelf, so all three openings can be closed.
+    let mut s = Session::new(Project::new("sections"));
+    s.execute("material.add", &json!({"name": "L16", "thickness": 16})).unwrap();
+    s.execute("cabinet.add", &json!({"width": 1200, "height": 2000, "depth": 450, "material": "L16", "plinth": 80})).unwrap();
+    s.execute("partition.add", &json!({"cabinet": 1, "x": 592})).unwrap();
+    s.execute("shelf.add", &json!({"cabinet": 1, "height": 1000, "section": 0})).unwrap();
+    s.execute("door.add", &json!({"at": [300, 1500], "material": "L16"})).unwrap();
+    s.execute("door.add", &json!({"at": [300, 500], "material": "L16"})).unwrap();
+    s.execute("drawers.add", &json!({"at": [900, 500], "material": "L16", "heights": [300, 300]})).unwrap();
+    let parts = build(&s.project).unwrap();
+    let fronts: Vec<&Part> = parts.iter().filter(|p| matches!(p.kind, Kind::Door | Kind::Drawer)).collect();
+    assert_eq!(fronts.len(), 4);
+    let doors = by_name(&parts, &crate::i18n::t("Door"));
+    // Left edge on the side panel's outer face, right edge at the partition middle (600) minus the 2 mm gap.
+    assert!(doors.iter().all(|d| (d.origin[0] - 2.0).abs() < 1e-6 && (d.origin[0] + d.size[0] - 598.0).abs() < 1e-6));
+    // The upper door starts above the shelf middle (1104), the lower one covers the bottom panel from 82.
+    let mut ys: Vec<f64> = doors.iter().map(|d| d.origin[1]).collect();
+    ys.sort_by(f64::total_cmp);
+    assert!((ys[0] - 82.0).abs() < 1e-6 && (ys[1] - 1106.0).abs() < 1e-6, "{ys:?}");
+}
