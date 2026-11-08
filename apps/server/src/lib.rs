@@ -11,6 +11,33 @@ use serde_json::{Value, json};
 
 const DEFAULT_SHEET: (f64, f64) = (2800.0, 2070.0);
 
+/// Commands that read server files (`furniture.add` takes a filesystem path) are not available over HTTP.
+const DENIED: &[&str] = &["furniture.add"];
+/// Request limits: commands per request, any number in parameters (mm or counts), copies per command, parts per model.
+const MAX_COMMANDS: usize = 500;
+const MAX_NUMBER: f64 = 100_000.0;
+const MAX_COPIES: f64 = 100.0;
+const MAX_PARTS: usize = 5_000;
+
+/// Rejects numbers that would make a model absurdly large or slow (also nested in arrays and objects).
+fn check_numbers(v: &Value, key: &str) -> Result<(), String> {
+    match v {
+        Value::Number(n) => {
+            let x = n.as_f64().unwrap_or(f64::INFINITY);
+            if !x.is_finite() || x.abs() > MAX_NUMBER {
+                return Err(format!("“{key}” is out of range (|value| ≤ {MAX_NUMBER})"));
+            }
+            if key == "count" && x > MAX_COPIES {
+                return Err(format!("“count” is limited to {MAX_COPIES}"));
+            }
+            Ok(())
+        }
+        Value::Array(a) => a.iter().try_for_each(|x| check_numbers(x, key)),
+        Value::Object(o) => o.iter().try_for_each(|(k, x)| check_numbers(x, k)),
+        _ => Ok(()),
+    }
+}
+
 /// Every output kind `build` can produce.
 pub const OUTPUTS: &[(&str, &str)] = &[
     ("b3d", "Bazis-Mebelshchik model (.b3d) without the Bazis signature tail — check in real Bazis"),
@@ -51,13 +78,24 @@ pub fn run(req: &Value) -> Result<(Project, Vec<Value>), Failure> {
         Some(Value::Array(a)) => a,
         Some(_) => return Err(bad(400, "commands must be an array")),
     };
+    if cmds.len() > MAX_COMMANDS {
+        return Err(bad(413, format!("at most {MAX_COMMANDS} commands per request")));
+    }
     for (i, c) in cmds.iter().enumerate() {
         let name = c.get("cmd").and_then(Value::as_str).ok_or_else(|| bad(400, format!("commands[{i}]: cmd is missing")))?;
+        if DENIED.contains(&name) {
+            return Err(Failure { status: 403, body: json!({ "error": "command not available over HTTP", "command_index": i, "cmd": name }) });
+        }
         let params = c.get("params").cloned().unwrap_or_else(|| json!({}));
+        check_numbers(&params, "params").map_err(|e| Failure { status: 400, body: json!({ "error": e, "command_index": i, "cmd": name }) })?;
         match s.execute(name, &params) {
             Ok(v) => results.push(v),
             Err(e) => return Err(Failure { status: 422, body: json!({ "error": e, "command_index": i, "cmd": name }) }),
         }
+    }
+    let parts = design::build(&s.project).map_err(|e| bad(422, e))?.len();
+    if parts > MAX_PARTS {
+        return Err(bad(413, format!("the model has {parts} parts, at most {MAX_PARTS}")));
     }
     Ok((s.project, results))
 }
@@ -148,6 +186,18 @@ mod tests {
         for k in kinds {
             assert!(!out["files"][k].as_str().unwrap().is_empty(), "{k} is empty");
         }
+    }
+
+    #[test]
+    fn file_reading_commands_and_huge_numbers_are_refused() {
+        let e = build(&json!({"commands": [{"cmd": "furniture.add", "params": {"path": "/etc/passwd"}}]})).unwrap_err();
+        assert_eq!(e.status, 403);
+        let e = build(&json!({"commands": [{"cmd": "material.add", "params": {"name": "M", "thickness": 1e9}}]})).unwrap_err();
+        assert_eq!(e.status, 400);
+        let e = build(&json!({"commands": [{"cmd": "object.copy", "params": {"ids": [1], "d": [1, 0, 0], "count": 5000}}]})).unwrap_err();
+        assert_eq!(e.status, 400);
+        let many: Vec<Value> = (0..=MAX_COMMANDS).map(|_| json!({"cmd": "undo"})).collect();
+        assert_eq!(build(&json!({"commands": many})).unwrap_err().status, 413);
     }
 
     #[test]

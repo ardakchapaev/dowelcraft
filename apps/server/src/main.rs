@@ -97,9 +97,12 @@ fn handle(mut req: Request, token: Option<&str>) {
     let status = if path != "/health" && !authorized(&req, token) {
         respond(req, json_response(401, &json!({"error": "unauthorized"})))
     } else {
-        match route(&mut req, &method, &path) {
-            Ok(file) => respond_file(req, file),
-            Err(r) => respond(req, r),
+        // A panic inside model building must not kill the worker thread.
+        let routed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| route(&mut req, &method, &path)));
+        match routed {
+            Ok(Ok(file)) => respond_file(req, file),
+            Ok(Err(r)) => respond(req, r),
+            Err(_) => respond(req, json_response(500, &json!({"error": "internal error while building the model"}))),
         }
     };
     eprintln!("{method} {path} {status} {:?}", started.elapsed());
