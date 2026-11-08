@@ -7,6 +7,7 @@
 //!   GET  /v1/outputs             → output kinds
 //!   POST /v1/build               → {name, parts, results, problems, files: {kind: base64}}
 //!   POST /v1/b3d                 → the .b3d file itself (application/octet-stream)
+//!   POST /v1/cfrn                → the .cfrn file itself (BAZIS-Cloud converts it to .b3d)
 //! The body of both POSTs: {name?, project?, commands: [{cmd, params}], outputs?: [kinds]}.
 //! When DOWEL_TOKEN is set, requests need `Authorization: Bearer <token>`.
 
@@ -111,7 +112,7 @@ fn route(req: &mut Request, method: &Method, path: &str) -> Result<(String, Vec<
         (Method::Get, "/health") => Err(json_response(200, &json!({"ok": true, "version": env!("CARGO_PKG_VERSION")}))),
         (Method::Get, "/v1/commands") => Err(json_response(200, &list(dowel::design::COMMANDS))),
         (Method::Get, "/v1/outputs") => Err(json_response(200, &list(dowel_server::OUTPUTS))),
-        (Method::Post, "/v1/build" | "/v1/b3d") => {
+        (Method::Post, "/v1/build" | "/v1/b3d" | "/v1/cfrn") => {
             let body = read_json(req).map_err(|(s, e)| json_response(s, &json!({"error": e})))?;
             if path == "/v1/build" {
                 return Err(match dowel_server::build(&body) {
@@ -119,9 +120,10 @@ fn route(req: &mut Request, method: &Method, path: &str) -> Result<(String, Vec<
                     Err(f) => json_response(f.status, &f.body),
                 });
             }
+            let kind = &path[4..];
             let (project, _) = dowel_server::run(&body).map_err(|f| json_response(f.status, &f.body))?;
-            let bytes = dowel_server::render(&project, "b3d").map_err(|e| json_response(422, &json!({"error": e})))?;
-            Ok((format!("{}.b3d", project.name), bytes))
+            let bytes = dowel_server::render(&project, kind).map_err(|e| json_response(422, &json!({"error": e})))?;
+            Ok((format!("{}.{kind}", project.name), bytes))
         }
         _ => Err(json_response(404, &json!({"error": "not found"}))),
     }

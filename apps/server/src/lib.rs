@@ -13,7 +13,8 @@ const DEFAULT_SHEET: (f64, f64) = (2800.0, 2070.0);
 
 /// Every output kind `build` can produce.
 pub const OUTPUTS: &[(&str, &str)] = &[
-    ("b3d", "Bazis-Mebelshchik model (.b3d)"),
+    ("b3d", "Bazis-Mebelshchik model (.b3d) without the Bazis signature tail — check in real Bazis"),
+    ("cfrn", "BAZIS-Cloud exchange model (.cfrn, documented format; the Cloud API converts it to .b3d)"),
     ("project", "the dowel-craft project (.dcraft JSON)"),
     ("spec_csv", "parts list (CSV)"),
     ("smeta_csv", "board and edge banding usage (CSV)"),
@@ -67,6 +68,7 @@ pub fn render(project: &Project, kind: &str) -> Result<Vec<u8>, String> {
     let sheet = |j: &Job, m: &str| j.sheet(m, DEFAULT_SHEET);
     Ok(match kind {
         "b3d" => dowel::export::b3d(project)?,
+        "cfrn" => dowel::cfrn::cfrn(project)?,
         "project" => project.save().into_bytes(),
         "spec_csv" => report::spec_csv(&panel::spec(&job().panels)).into_bytes(),
         "smeta_csv" => {

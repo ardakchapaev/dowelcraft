@@ -1,6 +1,7 @@
 //! dowel-craft core: reading Bazis-Mebelshchik models, parts list, sheet cutting.
 
 pub mod b3d;
+pub mod cfrn;
 pub mod contour;
 pub mod design;
 pub mod drawing;

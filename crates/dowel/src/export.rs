@@ -151,7 +151,7 @@ fn hole_node(p: &Part, h: &crate::panel::Hole, id: i32) -> Node {
 }
 
 /// Top-level object name for the Bazis block.
-fn owner_name(pr: &Project, owner: u32) -> String {
+pub(crate) fn owner_name(pr: &Project, owner: u32) -> String {
     pr.cabinets.iter().find(|c| c.id == owner).map(|c| c.name.clone())
         .or_else(|| pr.corners.iter().find(|c| c.id == owner).map(|c| c.name.clone()))
         .or_else(|| pr.countertops.iter().find(|c| c.id == owner).map(|c| c.name.clone()))
