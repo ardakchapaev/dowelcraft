@@ -1,0 +1,15 @@
+[package]
+name = "dowel-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dowel = { workspace = true }
+dowel-craft-cli = { path = "../cli" }
+serde_json = { workspace = true }
+tiny_http = "0.12"
+base64 = "0.22"
